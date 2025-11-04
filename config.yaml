@@ -1,0 +1,102 @@
+# Election Analysis System Configuration
+
+# Data Settings
+data:
+  required_columns:
+    - 'County'
+    - 'Precinct'
+    - 'Lat'
+    - 'Lon'
+    - 'Registered_Dem'
+    - 'Registered_Rep'
+    - 'Votes_Harris'
+    - 'Votes_Trump'
+    - 'Total_Votes'
+    - 'Turnout_Percent'
+  
+  validation:
+    lat_range: [-90, 90]
+    lon_range: [-180, 180]
+    turnout_range: [0, 100]
+    min_votes: 0
+  
+  missing_value_strategy: 'interpolate'  # Options: 'drop', 'interpolate', 'mean'
+
+# Statistical Analysis Settings
+statistics:
+  shpilkin:
+    polynomial_degree: 3
+    confidence_interval: 0.95
+    bin_size: 0.02
+  
+  spatial:
+    moran_i_weights: 'queen'  # Options: 'queen', 'rook', 'knn'
+    knn_neighbors: 8
+  
+  anomaly_threshold: 2.0  # Standard deviations for outlier detection
+
+# Machine Learning Settings
+ml:
+  isolation_forest:
+    contamination: 0.1
+    n_estimators: 100
+    random_state: 42
+  
+  dbscan:
+    eps: 0.5
+    min_samples: 5
+  
+  shap:
+    max_display: 10
+    sample_size: 1000
+
+# Visualization Settings
+visualization:
+  colors:
+    anomaly_high: '#FF4B4B'
+    anomaly_medium: '#FFA500'
+    anomaly_low: '#90EE90'
+    normal: '#1E88E5'
+  
+  map:
+    default_zoom: 6
+    tile_layer: 'OpenStreetMap'
+    marker_size: 5
+
+# Dashboard Settings
+dashboard:
+  page_config:
+    page_title: 'Election Truth Alliance Data Dashboard'
+    page_icon: '📊'
+    layout: 'wide'
+  
+  cache_ttl: 3600  # Cache timeout in seconds
+  max_file_size_mb: 200
+
+# LLM Integration (Optional)
+llm:
+  enabled: false
+  providers:
+    openai:
+      model: 'gpt-4'
+      max_tokens: 1000
+    anthropic:
+      model: 'claude-3-sonnet-20240229'
+      max_tokens: 1000
+    cohere:
+      model: 'command-r-plus'
+      max_tokens: 1000
+  
+  prompts:
+    anomaly_summary: |
+      Analyze the following precincts flagged as statistical anomalies in election data:
+      
+      {precinct_data}
+      
+      Summarize the key patterns and suggest audit priorities based on:
+      1. Magnitude of statistical deviation
+      2. Geographic clustering of anomalies
+      3. Turnout vs vote share patterns
+      4. ML model confidence scores
+      
+      Provide a concise executive summary and top 5 precincts for detailed audit.
