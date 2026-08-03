@@ -14,3 +14,4 @@ build/
 plots/
 models/
 .streamlit/secrets.toml
+.github/election-analysis.code-workspace
