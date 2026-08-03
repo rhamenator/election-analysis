@@ -25,6 +25,19 @@ def test_missing_config_uses_defaults(tmp_path) -> None:
         (("ml", "isolation_forest", "contamination"), 0.8),
         (("ml", "dbscan", "metric"), "made-up"),
         (("statistics", "spatial", "weights_type"), "hex"),
+        (("mcp", "transport"), "websocket"),
+        (("mcp", "host"), ""),
+        (("mcp", "port"), 0),
+        (("mcp", "port"), True),
+        (("statistics", "turnout_share", "polynomial_degree"), 0),
+        (("statistics", "turnout_share", "confidence_level"), 1),
+        (("statistics", "turnout_share", "baseline_turnout_quantile"), 0.4),
+        (("statistics", "digits", "alpha"), float("nan")),
+        (("statistics", "spatial", "knn_neighbors"), 0),
+        (("statistics", "spatial", "permutations"), 0),
+        (("ml", "isolation_forest", "n_estimators"), 0),
+        (("ml", "dbscan", "eps"), 0),
+        (("ml", "dbscan", "min_samples"), 0),
     ],
 )
 def test_invalid_config_values_are_rejected(path, value) -> None:
@@ -40,6 +53,13 @@ def test_invalid_config_values_are_rejected(path, value) -> None:
 def test_candidate_keys_must_be_unique() -> None:
     config = deep_merge(DEFAULT_CONFIG, {})
     config["data"]["schema"]["candidates"][1]["key"] = "candidate_a"
+    with pytest.raises(ValueError, match="unique"):
+        validate_config(config)
+
+
+def test_candidate_labels_must_be_unique() -> None:
+    config = deep_merge(DEFAULT_CONFIG, {})
+    config["data"]["schema"]["candidates"][1]["label"] = "Candidate A"
     with pytest.raises(ValueError, match="unique"):
         validate_config(config)
 

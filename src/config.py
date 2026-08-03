@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -132,11 +133,12 @@ def validate_config(config: Mapping[str, Any]) -> None:
     if not candidates:
         raise ValueError("data.schema.candidates must contain at least one candidate")
     columns = [item.get("column") for item in candidates]
+    labels = [item.get("label") for item in candidates]
     keys = [item.get("key") for item in candidates]
-    if any(not item for item in columns + keys):
+    if any(not item for item in columns + labels + keys):
         raise ValueError("every candidate requires non-empty column, label, and key values")
-    if len(set(columns)) != len(columns) or len(set(keys)) != len(keys):
-        raise ValueError("candidate columns and keys must be unique")
+    if any(len(set(values)) != len(values) for values in (columns, labels, keys)):
+        raise ValueError("candidate columns, labels, and keys must each be unique")
 
     pairs = config["data"]["schema"].get("down_ballot_pairs", [])
     candidate_keys = set(keys)
@@ -162,9 +164,72 @@ def validate_config(config: Mapping[str, Any]) -> None:
     if config["ml"]["dbscan"]["metric"] not in {"euclidean", "manhattan", "cosine"}:
         raise ValueError("unsupported DBSCAN metric")
 
+    def finite_number(value: Any, name: str, *, minimum: float, strict: bool = False) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
+            raise ValueError(f"{name} must be a finite number")
+        if value < minimum or (strict and value == minimum):
+            operator = ">" if strict else ">="
+            raise ValueError(f"{name} must be {operator} {minimum:g}")
+        return float(value)
+
+    tolerance = config["data"]["turnout_tolerance_percentage_points"]
+    finite_number(tolerance, "data.turnout_tolerance_percentage_points", minimum=0)
+    turnout = config["statistics"]["turnout_share"]
+    degree = turnout["polynomial_degree"]
+    if not isinstance(degree, int) or isinstance(degree, bool) or degree < 1:
+        raise ValueError("turnout_share.polynomial_degree must be a positive integer")
+    confidence = finite_number(
+        turnout["confidence_level"], "turnout_share.confidence_level", minimum=0, strict=True
+    )
+    if confidence >= 1:
+        raise ValueError("turnout_share.confidence_level must be less than 1")
+    quantile = finite_number(
+        turnout["baseline_turnout_quantile"],
+        "turnout_share.baseline_turnout_quantile",
+        minimum=0.5,
+    )
+    if quantile > 1:
+        raise ValueError("turnout_share.baseline_turnout_quantile must be at most 1")
+    for key in ("studentized_residual_threshold", "high_leverage_multiplier"):
+        finite_number(turnout[key], f"turnout_share.{key}", minimum=0, strict=True)
+
+    digits = config["statistics"]["digits"]
+    digit_alpha = finite_number(digits["alpha"], "digits.alpha", minimum=0, strict=True)
+    if digit_alpha >= 1:
+        raise ValueError("digits.alpha must be less than 1")
+
+    spatial = config["statistics"]["spatial"]
+    spatial_alpha = finite_number(spatial["alpha"], "spatial.alpha", minimum=0, strict=True)
+    if spatial_alpha >= 1:
+        raise ValueError("spatial.alpha must be less than 1")
+    for key in ("knn_neighbors", "permutations"):
+        value = spatial[key]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise ValueError(f"spatial.{key} must be a positive integer")
+
+    forest = config["ml"]["isolation_forest"]
+    estimators = forest["n_estimators"]
+    if not isinstance(estimators, int) or isinstance(estimators, bool) or estimators < 1:
+        raise ValueError("isolation_forest.n_estimators must be a positive integer")
+    dbscan = config["ml"]["dbscan"]
+    finite_number(dbscan["eps"], "dbscan.eps", minimum=0, strict=True)
+    min_samples = dbscan["min_samples"]
+    if not isinstance(min_samples, int) or isinstance(min_samples, bool) or min_samples < 1:
+        raise ValueError("dbscan.min_samples must be a positive integer")
+
     spatial_type = config["statistics"]["spatial"]["weights_type"]
     if spatial_type not in {"knn", "queen", "rook"}:
         raise ValueError("spatial weights_type must be knn, queen, or rook")
+
+    transport = config["mcp"]["transport"]
+    if transport not in {"stdio", "sse", "streamable-http"}:
+        raise ValueError("mcp.transport must be stdio, sse, or streamable-http")
+    host = config["mcp"]["host"]
+    if not isinstance(host, str) or not host.strip():
+        raise ValueError("mcp.host must be a non-empty string")
+    port = config["mcp"]["port"]
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        raise ValueError("mcp.port must be an integer in [1, 65535]")
 
 
 def load_config(path: str | Path | None = None) -> dict[str, Any]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import io
 import logging
@@ -139,6 +140,17 @@ class ElectionDataIngester:
         for encoding in self.config["data"]["encodings"]:
             try:
                 text = payload.decode(encoding)
+                header = next(csv.reader(io.StringIO(text)), [])
+                duplicates = sorted(
+                    {column for column in header if header.count(column) > 1}
+                )
+                if duplicates:
+                    report.add(
+                        "duplicate_columns",
+                        f"Duplicate CSV column names are ambiguous: {', '.join(duplicates)}",
+                        Severity.ERROR,
+                    )
+                    raise DataValidationError(report.errors[-1].message, report)
                 frame = pd.read_csv(io.StringIO(text))
                 report.encoding = encoding
                 return frame
@@ -179,9 +191,40 @@ class ElectionDataIngester:
     def _select_schema(self, frame: pd.DataFrame, schema: ContestSchema | None) -> ContestSchema:
         if schema is not None:
             return schema
+        configured = _configured_schema(self.config)
+        configured_required = {
+            configured.jurisdiction,
+            configured.precinct,
+            *configured.candidate_columns,
+        }
+        if configured.valid_contest_votes:
+            configured_required.add(configured.valid_contest_votes)
+        if configured.valid_contest_votes and configured_required.issubset(frame.columns):
+            return configured
         if LEGACY_COLUMNS.issubset(frame.columns):
             return legacy_schema()
-        return _configured_schema(self.config)
+        return configured
+
+    @staticmethod
+    def _preserve_collision(
+        frame: pd.DataFrame, column: str, report: ValidationReport
+    ) -> None:
+        """Preserve a source field before writing a canonical or derived field over it."""
+        if column not in frame.columns:
+            return
+        preserved = f"Source_Original__{column}"
+        suffix = 2
+        while preserved in frame.columns:
+            preserved = f"Source_Original__{column}__{suffix}"
+            suffix += 1
+        frame[preserved] = frame[column]
+        report.add(
+            "reserved_column_collision",
+            f"Source column {column!r} was preserved as {preserved!r} before the system "
+            "generated its reserved field",
+            Severity.WARNING,
+            column=column,
+        )
 
     def _validate_mapping(
         self, frame: pd.DataFrame, schema: ContestSchema, report: ValidationReport
@@ -211,12 +254,15 @@ class ElectionDataIngester:
         for concept, canonical in CANONICAL_COLUMNS.items():
             source_column = getattr(schema, concept)
             if source_column and source_column in frame.columns:
+                if source_column != canonical and canonical in frame.columns:
+                    self._preserve_collision(frame, canonical, report)
                 frame[canonical] = frame[source_column]
 
         if schema.source_schema == "legacy_harris_trump":
             registration = frame[["Registered_Dem", "Registered_Rep"]].apply(
                 pd.to_numeric, errors="coerce"
             )
+            self._preserve_collision(frame, "Registered_Voters", report)
             frame["Registered_Voters"] = registration.sum(axis=1, min_count=2)
             report.add(
                 "legacy_registration_derived",
@@ -245,6 +291,7 @@ class ElectionDataIngester:
                 )
             frame[column] = frame[column].astype("string").str.strip()
 
+        ElectionDataIngester._preserve_collision(frame, "Precinct_ID", report)
         frame["Precinct_ID"] = (
             frame["Jurisdiction"].fillna("") + "::" + frame["Precinct"].fillna("")
         )
@@ -401,9 +448,18 @@ class ElectionDataIngester:
             frame.loc[invalid, column] = np.nan
 
         if "Reported_Turnout_Percent" in frame:
-            frame["Reported_Turnout_Percent"] = pd.to_numeric(
-                frame["Reported_Turnout_Percent"], errors="coerce"
-            )
+            original = frame["Reported_Turnout_Percent"]
+            numeric = pd.to_numeric(original, errors="coerce")
+            nonnumeric = original.notna() & numeric.isna()
+            for index in frame.index[nonnumeric]:
+                report.add(
+                    "nonnumeric_reported_turnout",
+                    "Reported turnout is not numeric",
+                    Severity.ERROR,
+                    row=int(index),
+                    column="Reported_Turnout_Percent",
+                )
+            frame["Reported_Turnout_Percent"] = numeric
             impossible = frame["Reported_Turnout_Percent"].notna() & ~frame[
                 "Reported_Turnout_Percent"
             ].between(0, 100)
@@ -422,6 +478,7 @@ class ElectionDataIngester:
     ) -> pd.DataFrame:
         total = frame["Valid_Contest_Votes"].astype(float)
         for candidate in schema.candidates:
+            self._preserve_collision(frame, candidate.share_column, report)
             frame[candidate.share_column] = np.where(
                 total > 0, frame[candidate.column].astype(float) / total, np.nan
             )
@@ -431,9 +488,13 @@ class ElectionDataIngester:
             calculated = np.where(
                 registered > 0, frame["Ballots_Cast"].astype(float) / registered * 100, np.nan
             )
+            self._preserve_collision(frame, "Calculated_Turnout_Percent", report)
             frame["Calculated_Turnout_Percent"] = calculated
             if "Reported_Turnout_Percent" in frame:
                 difference = (frame["Reported_Turnout_Percent"] - calculated).abs()
+                self._preserve_collision(
+                    frame, "Turnout_Discrepancy_Percentage_Points", report
+                )
                 frame["Turnout_Discrepancy_Percentage_Points"] = difference
                 tolerance = float(self.config["data"]["turnout_tolerance_percentage_points"])
                 for index in frame.index[difference > tolerance]:

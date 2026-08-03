@@ -37,12 +37,16 @@ def filter_records(
         selected = set(jurisdictions)
         mask &= frame["Jurisdiction"].isin(selected)
     if turnout_range is not None:
-        turnout_column = (
-            "Calculated_Turnout_Percent"
-            if "Calculated_Turnout_Percent" in frame
-            else "Reported_Turnout_Percent"
+        turnout_column = next(
+            (
+                column
+                for column in ("Calculated_Turnout_Percent", "Reported_Turnout_Percent")
+                if column in frame
+            ),
+            None,
         )
-        mask &= pd.to_numeric(frame[turnout_column], errors="coerce").between(*turnout_range)
+        if turnout_column is not None:
+            mask &= pd.to_numeric(frame[turnout_column], errors="coerce").between(*turnout_range)
     if minimum_ballots is not None and "Ballots_Cast" in frame:
         mask &= pd.to_numeric(frame["Ballots_Cast"], errors="coerce") >= minimum_ballots
     if vote_types is not None and "Vote_Type" in frame:

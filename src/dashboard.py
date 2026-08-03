@@ -67,7 +67,7 @@ def _signature(
     candidate_key: str,
     methods: list[str],
     jurisdictions: list[str],
-    turnout_range: tuple[float, float],
+    turnout_range: tuple[float, float] | None,
     minimum_ballots: int,
     vote_types: list[str],
 ) -> str:
@@ -84,6 +84,24 @@ def _signature(
         sort_keys=True,
     )
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _turnout_bounds(frame: pd.DataFrame) -> tuple[float, float] | None:
+    """Return finite turnout bounds, or None when turnout filtering is unavailable."""
+    turnout_column = next(
+        (
+            column
+            for column in ("Calculated_Turnout_Percent", "Reported_Turnout_Percent")
+            if column in frame
+        ),
+        None,
+    )
+    if turnout_column is None:
+        return None
+    turnout_values = pd.to_numeric(frame[turnout_column], errors="coerce").dropna()
+    if turnout_values.empty:
+        return None
+    return float(turnout_values.min()), float(turnout_values.max())
 
 
 def _status_table(run: Any) -> pd.DataFrame:
@@ -177,19 +195,21 @@ def main() -> None:
         vote_types = st.sidebar.multiselect(
             "Vote types", available_vote_types, default=available_vote_types
         )
-    turnout_column = (
-        "Calculated_Turnout_Percent"
-        if "Calculated_Turnout_Percent" in ingestion.data
-        else "Reported_Turnout_Percent"
-    )
-    turnout_values = pd.to_numeric(ingestion.data[turnout_column], errors="coerce").dropna()
-    turnout_bounds = (float(turnout_values.min()), float(turnout_values.max()))
-    turnout_range = st.sidebar.slider(
-        "Turnout range (%)",
-        min_value=turnout_bounds[0],
-        max_value=turnout_bounds[1],
-        value=turnout_bounds,
-    )
+    turnout_bounds = _turnout_bounds(ingestion.data)
+    turnout_range: tuple[float, float] | None
+    if turnout_bounds is None:
+        turnout_range = None
+        st.sidebar.caption("Turnout filter unavailable: no usable turnout field was mapped.")
+    elif turnout_bounds[0] == turnout_bounds[1]:
+        turnout_range = turnout_bounds
+        st.sidebar.caption(f"Turnout is constant at {turnout_bounds[0]:g}%.")
+    else:
+        turnout_range = st.sidebar.slider(
+            "Turnout range (%)",
+            min_value=turnout_bounds[0],
+            max_value=turnout_bounds[1],
+            value=turnout_bounds,
+        )
     maximum_ballots = (
         int(ingestion.data["Ballots_Cast"].max()) if "Ballots_Cast" in ingestion.data else 0
     )

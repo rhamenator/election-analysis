@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import pandas as pd
 from streamlit.testing.v1 import AppTest
+
+from src.dashboard import _turnout_bounds
+from src.workflow import filter_records
 
 
 def open_app() -> AppTest:
@@ -65,3 +69,12 @@ def test_empty_filter_is_graceful_and_method_status_visible() -> None:
         status.state.value == "unavailable"
         for status in app.session_state.analysis_run.statuses.values()
     )
+
+
+def test_turnout_filter_is_optional_and_handles_missing_or_constant_values() -> None:
+    frame = pd.DataFrame({"Jurisdiction": ["A", "B"], "Precinct": ["1", "2"]})
+    assert _turnout_bounds(frame) is None
+    assert len(filter_records(frame, turnout_range=(0, 100))) == 2
+
+    frame["Reported_Turnout_Percent"] = [50.0, 50.0]
+    assert _turnout_bounds(frame) == (50.0, 50.0)

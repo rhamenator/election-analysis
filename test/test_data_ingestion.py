@@ -24,6 +24,34 @@ def test_generalized_schema_preserves_unrecognized_columns(generalized_frame) ->
     assert result.report.encoding == "utf-8-sig"
 
 
+def test_configured_schema_wins_when_input_also_contains_legacy_columns(
+    generalized_frame,
+) -> None:
+    frame = generalized_frame.head(3).copy()
+    frame["County"] = "Legacy county"
+    frame["Registered_Dem"] = 100
+    frame["Registered_Rep"] = 100
+    frame["Votes_Harris"] = 80
+    frame["Votes_Trump"] = 100
+    frame["Total_Votes"] = 180
+    frame["Turnout_Percent"] = 90
+    result = ElectionDataIngester().process(csv_bytes(frame))
+    assert result.schema.source_schema == "configured"
+    assert set(result.data["Jurisdiction"]) == set(frame["Jurisdiction"])
+
+
+def test_reserved_source_columns_are_preserved_before_generation(generalized_frame) -> None:
+    frame = generalized_frame.head(3).copy()
+    frame["Precinct_ID"] = "official-id"
+    frame["Candidate_Share__candidate_a"] = 0.123
+    frame["Calculated_Turnout_Percent"] = 12.3
+    result = ElectionDataIngester().process(csv_bytes(frame))
+    assert (result.data["Source_Original__Precinct_ID"] == "official-id").all()
+    assert np.allclose(result.data["Source_Original__Candidate_Share__candidate_a"], 0.123)
+    assert np.allclose(result.data["Source_Original__Calculated_Turnout_Percent"], 12.3)
+    assert "reserved_column_collision" in {issue.code for issue in result.report.warnings}
+
+
 def test_legacy_adapter_is_explicit_and_preserves_source(legacy_frame) -> None:
     result = ElectionDataIngester().process(csv_bytes(legacy_frame))
     assert result.schema.source_schema == "legacy_harris_trump"
@@ -105,6 +133,25 @@ def test_empty_input_is_rejected(payload) -> None:
 def test_malformed_csv_is_rejected() -> None:
     with pytest.raises(DataValidationError):
         ElectionDataIngester().process(b'"unterminated')
+
+
+def test_duplicate_headers_are_rejected_as_ambiguous() -> None:
+    payload = (
+        b"Jurisdiction,Precinct,Valid_Contest_Votes,Votes_Candidate_A,"
+        b"Votes_Candidate_A,Votes_Candidate_B\nA,1,10,4,5,6\n"
+    )
+    with pytest.raises(DataValidationError) as error:
+        ElectionDataIngester().process(payload)
+    assert error.value.report.errors[0].code == "duplicate_columns"
+
+
+def test_nonnumeric_reported_turnout_excludes_the_row(generalized_frame) -> None:
+    frame = generalized_frame.head(3).copy()
+    frame["Reported_Turnout_Percent"] = frame["Reported_Turnout_Percent"].astype(object)
+    frame.loc[1, "Reported_Turnout_Percent"] = "not reported"
+    result = ElectionDataIngester().process(csv_bytes(frame))
+    assert len(result.data) == 2
+    assert result.excluded.iloc[0]["Exclusion_Reasons"] == "nonnumeric_reported_turnout"
 
 
 def test_unsupported_mapping_reports_missing_columns() -> None:

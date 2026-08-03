@@ -153,6 +153,17 @@ def test_explanation_without_shap_is_explicit(ingestion) -> None:
     assert not explanation["isolation_forest_importance"].empty
 
 
+def test_explanation_is_explicit_when_isolation_forest_is_disabled(
+    ingestion, config_writer
+) -> None:
+    path = config_writer({"ml": {"isolation_forest": {"enabled": False}}})
+    detector = MLAnomalyDetector(path).fit_models(ingestion.data)
+    explanation = detector.explain_predictions(ingestion.data)
+    assert explanation["isolation_forest_status"].startswith("unavailable")
+    assert explanation["shap_status"].startswith("skipped")
+    assert "isolation_forest_importance" not in explanation
+
+
 def test_ml_orchestrator_disabled_and_failure_paths(ingestion, config_writer, monkeypatch) -> None:
     candidate = ingestion.schema.candidates[0].share_column
     disabled_path = config_writer(

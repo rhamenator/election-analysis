@@ -400,11 +400,16 @@ class MLAnomalyDetector:
         if not self.models_fitted:
             raise ValueError("Models must be fitted before explanation")
         matrix = self.feature_engineer.transform(frame)
-        explanation: dict[str, Any] = {
-            "isolation_forest_importance": self.isolation_forest.get_feature_importance(
-                matrix, self.feature_names
+        explanation: dict[str, Any] = {}
+        if self.isolation_forest.model is None:
+            explanation["isolation_forest_status"] = (
+                "unavailable: Isolation Forest is disabled or was not fitted"
             )
-        }
+        else:
+            explanation["isolation_forest_importance"] = (
+                self.isolation_forest.get_feature_importance(matrix, self.feature_names)
+            )
+            explanation["isolation_forest_status"] = "successful"
         if not self.full_config["ml"]["shap"]["enabled"]:
             explanation["shap_status"] = "skipped: disabled by configuration"
             return explanation
