@@ -26,6 +26,9 @@ complete exports, and optional LLM-assisted explanation.
   cannot create measurements, override method status, infer causes, or prioritize ballot audits.
 
 The exact assumptions and limits are documented in [docs/methodology.md](docs/methodology.md).
+Stepwise operating and architecture instructions are available in
+[docs/user-guide.md](docs/user-guide.md), with a standalone rendered edition at
+[output/pdf/precinct-election-analysis-user-guide.pdf](output/pdf/precinct-election-analysis-user-guide.pdf).
 
 ## Install and run
 
