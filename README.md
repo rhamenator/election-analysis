@@ -9,6 +9,8 @@ complete exports, and optional LLM-assisted explanation.
 > An anomaly is unusual under a stated model. It is not proof of fraud, misconduct, or an
 > incorrect outcome. Aggregate-result analysis is not a risk-limiting audit of ballot evidence.
 
+Copyright © 2026 Rich Hamilton. Licensed under the [GNU General Public License v3.0 only](LICENSE).
+
 ## What is implemented
 
 - Schema-driven CSV ingestion that preserves source columns, records a SHA-256 provenance hash,
