@@ -1,102 +1,104 @@
-# Election Analysis System Configuration
-
-# Data Settings
+# Default configuration for fictional/generalized contest data.
+# Source values are preserved; missing election counts and coordinates are never imputed.
 data:
-  required_columns:
-    - 'County'
-    - 'Precinct'
-    - 'Lat'
-    - 'Lon'
-    - 'Registered_Dem'
-    - 'Registered_Rep'
-    - 'Votes_Harris'
-    - 'Votes_Trump'
-    - 'Total_Votes'
-    - 'Turnout_Percent'
-  
-  validation:
-    lat_range: [-90, 90]
-    lon_range: [-180, 180]
-    turnout_range: [0, 100]
-    min_votes: 0
-  
-  missing_value_strategy: 'interpolate'  # Options: 'drop', 'interpolate', 'mean'
+  max_file_size_mb: 200
+  encodings: [utf-8-sig, utf-8, cp1252, latin-1]
+  turnout_tolerance_percentage_points: 1.0
+  schema:
+    jurisdiction: Jurisdiction
+    precinct: Precinct
+    registered_voters: Registered_Voters
+    active_registered_voters: null
+    ballots_cast: Ballots_Cast
+    valid_contest_votes: Valid_Contest_Votes
+    write_in_votes: Write_In_Votes
+    undervotes: Undervotes
+    overvotes: Overvotes
+    latitude: Latitude
+    longitude: Longitude
+    reported_turnout: Reported_Turnout_Percent
+    # Map this when rows distinguish Election Day, Early, Mail, Provisional, etc.
+    vote_type: null
+    party_registration: []
+    # Optional same-party comparisons used by ETA-style down-ballot analysis.
+    down_ballot_pairs:
+      - presidential_candidate_key: candidate_a
+        down_ballot_column: Votes_Down_Ballot_A
+        label: Candidate A / Down-Ballot A
+        key: candidate_a_down_ballot
+      - presidential_candidate_key: candidate_b
+        down_ballot_column: Votes_Down_Ballot_B
+        label: Candidate B / Down-Ballot B
+        key: candidate_b_down_ballot
+    contest_votes_may_exceed_ballots: false
+    ballots_may_exceed_registration: false
+    candidates:
+      - column: Votes_Candidate_A
+        label: Candidate A
+        key: candidate_a
+      - column: Votes_Candidate_B
+        label: Candidate B
+        key: candidate_b
 
-# Statistical Analysis Settings
 statistics:
-  shpilkin:
-    polynomial_degree: 3
-    confidence_interval: 0.95
-    bin_size: 0.02
-  
+  turnout_share:
+    polynomial_degree: 1
+    confidence_level: 0.95
+    minimum_observations: 20
+    baseline_turnout_quantile: 0.90
+    studentized_residual_threshold: 3.0
+    high_leverage_multiplier: 2.0
+  digits:
+    minimum_observations: 30
+    alpha: 0.05
+    benford_enabled: false
+    benford_minimum_observations: 100
+    benford_minimum_orders: 2
   spatial:
-    moran_i_weights: 'queen'  # Options: 'queen', 'rook', 'knn'
+    weights_type: knn
     knn_neighbors: 8
-  
-  anomaly_threshold: 2.0  # Standard deviations for outlier detection
-
-# Machine Learning Settings
-ml:
-  isolation_forest:
-    contamination: 0.1
-    n_estimators: 100
+    permutations: 999
+    alpha: 0.05
     random_state: 42
-  
-  dbscan:
-    eps: 0.5
-    min_samples: 5
-  
-  shap:
-    max_display: 10
-    sample_size: 1000
 
-# Visualization Settings
+ml:
+  random_state: 42
+  isolation_forest:
+    enabled: true
+    contamination: auto
+    n_estimators: 200
+    max_samples: auto
+  dbscan:
+    enabled: false
+    eps: 1.5
+    min_samples: 5
+    metric: euclidean
+  shap:
+    enabled: false
+    sample_size: 500
+
 visualization:
   colors:
-    anomaly_high: '#FF4B4B'
-    anomaly_medium: '#FFA500'
-    anomaly_low: '#90EE90'
-    normal: '#1E88E5'
-  
+    normal: "#1E88E5"
+    flagged: "#D55E00"
+    expected: "#009E73"
+    unavailable: "#777777"
   map:
     default_zoom: 6
-    tile_layer: 'OpenStreetMap'
-    marker_size: 5
+    tile_layer: OpenStreetMap
+    marker_size: 7
 
-# Dashboard Settings
 dashboard:
-  page_config:
-    page_title: 'Election Truth Alliance Data Dashboard'
-    page_icon: '📊'
-    layout: 'wide'
-  
-  cache_ttl: 3600  # Cache timeout in seconds
+  page_title: Precinct Election Analysis
   max_file_size_mb: 200
 
-# LLM Integration (Optional)
 llm:
   enabled: false
-  providers:
-    openai:
-      model: 'gpt-4'
-      max_tokens: 1000
-    anthropic:
-      model: 'claude-3-sonnet-20240229'
-      max_tokens: 1000
-    cohere:
-      model: 'command-r-plus'
-      max_tokens: 1000
-  
-  prompts:
-    anomaly_summary: |
-      Analyze the following precincts flagged as statistical anomalies in election data:
-      
-      {precinct_data}
-      
-      Summarize the key patterns and suggest audit priorities based on:
-      1. Magnitude of statistical deviation
-      2. Geographic clustering of anomalies
-      3. Turnout vs vote share patterns
-      4. ML model confidence scores
-      
-      Provide a concise executive summary and top 5 precincts for detailed audit.
+  provider: openai
+  model: gpt-5.6-luna
+  max_output_tokens: 800
+
+mcp:
+  transport: stdio
+  host: 127.0.0.1
+  port: 8000
