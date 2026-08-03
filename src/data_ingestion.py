@@ -141,9 +141,7 @@ class ElectionDataIngester:
             try:
                 text = payload.decode(encoding)
                 header = next(csv.reader(io.StringIO(text)), [])
-                duplicates = sorted(
-                    {column for column in header if header.count(column) > 1}
-                )
+                duplicates = sorted({column for column in header if header.count(column) > 1})
                 if duplicates:
                     report.add(
                         "duplicate_columns",
@@ -206,9 +204,7 @@ class ElectionDataIngester:
         return configured
 
     @staticmethod
-    def _preserve_collision(
-        frame: pd.DataFrame, column: str, report: ValidationReport
-    ) -> None:
+    def _preserve_collision(frame: pd.DataFrame, column: str, report: ValidationReport) -> None:
         """Preserve a source field before writing a canonical or derived field over it."""
         if column not in frame.columns:
             return
@@ -492,9 +488,7 @@ class ElectionDataIngester:
             frame["Calculated_Turnout_Percent"] = calculated
             if "Reported_Turnout_Percent" in frame:
                 difference = (frame["Reported_Turnout_Percent"] - calculated).abs()
-                self._preserve_collision(
-                    frame, "Turnout_Discrepancy_Percentage_Points", report
-                )
+                self._preserve_collision(frame, "Turnout_Discrepancy_Percentage_Points", report)
                 frame["Turnout_Discrepancy_Percentage_Points"] = difference
                 tolerance = float(self.config["data"]["turnout_tolerance_percentage_points"])
                 for index in frame.index[difference > tolerance]:

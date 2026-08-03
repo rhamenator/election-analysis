@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from src.data_ingestion import DataValidationError, ElectionDataIngester
-from src.models import CandidateDefinition, ContestSchema
+from src.models import CandidateDefinition, ContestSchema, ValidationReport
 
 
 def csv_bytes(frame: pd.DataFrame, encoding: str = "utf-8") -> bytes:
@@ -286,3 +286,100 @@ def test_mapped_vote_type_is_part_of_stable_precinct_key(generalized_frame, conf
     assert len(result.data) == 2
     assert result.data["Precinct_ID"].is_unique
     assert set(result.data["Vote_Type"]) == {"Mail", "Election Day"}
+
+
+def test_text_stream_unsupported_encoding_and_empty_rows(generalized_frame, config_writer) -> None:
+    stream = io.StringIO(generalized_frame.head(2).to_csv(index=False))
+    assert len(ElectionDataIngester().load_csv(stream)) == 2
+
+    path = config_writer({"data": {"encodings": ["utf-8"]}})
+    with pytest.raises(DataValidationError, match="supported encoding"):
+        ElectionDataIngester(path).load_csv(b"\xff\xfe")
+
+    headers = generalized_frame.head(0).to_csv(index=False).encode()
+    with pytest.raises(DataValidationError, match="no data rows"):
+        ElectionDataIngester().process(headers)
+
+
+def test_path_size_limit_is_checked_before_reading(tmp_path, config_writer) -> None:
+    path = config_writer({"data": {"max_file_size_mb": 0.000001}})
+    source = tmp_path / "oversized.csv"
+    source.write_bytes(b"more than one byte")
+    with pytest.raises(DataValidationError, match="configured maximum"):
+        ElectionDataIngester(path).load_csv(source)
+
+
+def test_canonical_collisions_are_preserved_with_unique_suffixes() -> None:
+    source = pd.DataFrame(
+        {
+            "CountyName": ["Mapped"],
+            "Jurisdiction": ["Original"],
+            "Source_Original__Jurisdiction": ["Earlier"],
+            "PrecinctName": ["1"],
+            "ContestTotal": [10],
+            "Choice": [10],
+        }
+    )
+    schema = ContestSchema(
+        jurisdiction="CountyName",
+        precinct="PrecinctName",
+        valid_contest_votes="ContestTotal",
+        candidates=(CandidateDefinition("Choice", "Choice", "choice"),),
+    )
+    result = ElectionDataIngester().process(csv_bytes(source), schema=schema)
+    assert result.data.loc[0, "Jurisdiction"] == "Mapped"
+    assert result.data.loc[0, "Source_Original__Jurisdiction__2"] == "Original"
+    assert any(issue.code == "reserved_column_collision" for issue in result.report.issues)
+
+
+def test_minimal_schema_without_turnout_coordinates_or_ballots_is_valid() -> None:
+    source = pd.DataFrame(
+        {
+            "Area": ["A", "B"],
+            "Unit": ["1", "2"],
+            "Contest": [10, 20],
+            "Choice": [4, 12],
+        }
+    )
+    schema = ContestSchema(
+        jurisdiction="Area",
+        precinct="Unit",
+        valid_contest_votes="Contest",
+        candidates=(CandidateDefinition("Choice", "Choice", "choice"),),
+    )
+    result = ElectionDataIngester().process(csv_bytes(source), schema=schema)
+    assert len(result.data) == 2
+    assert "Calculated_Turnout_Percent" not in result.data
+    assert "Latitude" not in result.data
+
+
+def test_impossible_reported_turnout_is_excluded(generalized_frame) -> None:
+    frame = generalized_frame.head(2).copy()
+    frame.loc[0, "Reported_Turnout_Percent"] = 101
+    result = ElectionDataIngester().process(csv_bytes(frame))
+    assert len(result.data) == 1
+    assert "impossible_reported_turnout" in result.excluded.loc[0, "Exclusion_Reasons"]
+
+
+def test_dataframe_summary_and_module_demo(generalized_frame, capsys) -> None:
+    summary = ElectionDataIngester.get_data_summary(generalized_frame.head(3))
+    assert summary["total_precincts"] == 3
+    assert summary["data_quality"]["excluded_rows"] == 0
+
+    from src.data_ingestion import main
+
+    main()
+    assert "Validated 30 precincts" in capsys.readouterr().out
+
+
+def test_coerce_counts_ignores_optional_absent_columns() -> None:
+    frame = pd.DataFrame({"Votes": [1, 2]})
+    schema = ContestSchema(
+        jurisdiction="Area",
+        precinct="Unit",
+        valid_contest_votes="Contest",
+        candidates=(CandidateDefinition("Votes", "Choice", "choice"),),
+        party_registration=("Absent",),
+    )
+    result = ElectionDataIngester._coerce_counts(frame, schema, ValidationReport())
+    assert result["Votes"].dtype == "Float64"

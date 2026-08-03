@@ -271,3 +271,89 @@ def test_statistical_orchestrator_has_statuses_and_no_composite(ingestion, monke
     )
     assert failed.statuses["turnout_share"].state == MethodState.FAILED
     assert "visible failure" in failed.statuses["turnout_share"].message
+
+
+def test_digit_and_candidate_column_unavailability_is_explicit(ingestion) -> None:
+    with pytest.raises(AnalysisUnavailable, match="No configured"):
+        DigitAnalyzer().analyze(ingestion.data, ["absent"])
+
+    detector = StatisticalAnomalyDetector()
+    candidate = ingestion.schema.candidates[0].share_column
+    run = detector.run(
+        ingestion.data,
+        candidate,
+        candidate_vote_columns=ingestion.schema.candidate_columns,
+        methods=["vote_share_by_count", "down_ballot_difference"],
+    )
+    assert all(status.state == MethodState.UNAVAILABLE for status in run.statuses.values())
+    assert len(run.status_records()) == 2
+
+
+def test_polygon_weights_optional_dependency_and_queen_rook_selection(monkeypatch) -> None:
+    import sys
+    from types import ModuleType
+
+    analyzer = SpatialAnalyzer()
+    frame = pd.DataFrame({"Geometry": ["a", "b", "c"]})
+    monkeypatch.setitem(sys.modules, "libpysal", None)
+    with pytest.raises(AnalysisUnavailable, match="optional spatial"):
+        analyzer._polygon_weights(frame, "queen")
+
+    calls = []
+
+    class Weights:
+        transform = None
+
+        def full(self):
+            return np.eye(3), [0, 1, 2]
+
+    class Builder:
+        @classmethod
+        def from_iterable(cls, geometry):
+            calls.append((cls.__name__, list(geometry)))
+            return Weights()
+
+    class Queen(Builder):
+        pass
+
+    class Rook(Builder):
+        pass
+
+    package = ModuleType("libpysal")
+    weights_module = ModuleType("libpysal.weights")
+    weights_module.Queen = Queen
+    weights_module.Rook = Rook
+    package.weights = weights_module
+    monkeypatch.setitem(sys.modules, "libpysal", package)
+    monkeypatch.setitem(sys.modules, "libpysal.weights", weights_module)
+    queen, queen_k = analyzer._polygon_weights(frame, "queen")
+    rook, rook_k = analyzer._polygon_weights(frame, "rook")
+    assert np.array_equal(queen, np.eye(3))
+    assert np.array_equal(rook, np.eye(3))
+    assert queen_k == rook_k == -1
+    assert [call[0] for call in calls] == ["Queen", "Rook"]
+
+
+def test_turnout_baseline_and_rank_guards(ingestion, monkeypatch) -> None:
+    candidate = ingestion.schema.candidates[0].share_column
+    with pytest.raises(AnalysisUnavailable, match="baseline turnout range"):
+        TurnoutShareAnalyzer(
+            {"minimum_observations": 70, "baseline_turnout_quantile": 0.5}
+        ).analyze(ingestion.data, candidate)
+
+    monkeypatch.setattr(np.linalg, "matrix_rank", lambda matrix: 0)
+    with pytest.raises(AnalysisUnavailable, match="rank deficient"):
+        TurnoutShareAnalyzer().analyze(ingestion.data, candidate)
+
+
+def test_spatial_analyze_uses_explicit_polygon_weights(ingestion, monkeypatch) -> None:
+    frame = ingestion.data.head(8).copy()
+    frame["Geometry"] = [f"polygon-{index}" for index in range(len(frame))]
+    candidate = ingestion.schema.candidates[0].share_column
+    analyzer = SpatialAnalyzer({"weights_type": "queen", "permutations": 9})
+    n = len(frame)
+    weights = np.ones((n, n), dtype=float) - np.eye(n)
+    weights /= weights.sum(axis=1, keepdims=True)
+    monkeypatch.setattr(analyzer, "_polygon_weights", lambda selected, kind: (weights, -1))
+    _, diagnostic = analyzer.analyze(frame, candidate)
+    assert diagnostic["weights"] == "queen polygon adjacency"

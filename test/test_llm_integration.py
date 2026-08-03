@@ -108,3 +108,49 @@ def test_initialize_provider_and_cli_status(monkeypatch, capsys) -> None:
 
     main()
     assert "disabled by default" in capsys.readouterr().out
+
+
+def test_openai_adapter_builds_client_from_explicit_or_environment_key(monkeypatch) -> None:
+    import sys
+
+    created = []
+    monkeypatch.setitem(
+        sys.modules,
+        "openai",
+        SimpleNamespace(OpenAI=lambda **kwargs: created.append(kwargs) or object()),
+    )
+    OpenAIResponsesProvider(model="gpt-test", api_key="explicit")
+    monkeypatch.setenv("OPENAI_API_KEY", "environment")
+    OpenAIResponsesProvider(model="gpt-test")
+    assert created == [{"api_key": "explicit"}, {"api_key": "environment"}]
+
+
+def test_summary_reports_provider_initialization_as_unavailable(ingestion, monkeypatch) -> None:
+    run = ElectionAnalysisWorkflow().run(
+        ingestion, candidate_key="candidate_a", methods=["turnout_share"]
+    )
+    agent = AnomalyReasoningAgent()
+    agent.enabled = True
+    monkeypatch.setattr(
+        agent,
+        "initialize_provider",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ImportError("provider absent")),
+    )
+    result = agent.generate_executive_summary(run)
+    assert result.status == "unavailable"
+    assert "provider absent" in result.text
+
+
+def test_openai_adapter_has_actionable_optional_dependency_error(monkeypatch) -> None:
+    import builtins
+
+    original_import = builtins.__import__
+
+    def missing_openai(name, *args, **kwargs):
+        if name == "openai":
+            raise ImportError("not installed")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", missing_openai)
+    with pytest.raises(ImportError, match=r"llm.*dependency"):
+        OpenAIResponsesProvider(model="gpt-test", api_key="key")

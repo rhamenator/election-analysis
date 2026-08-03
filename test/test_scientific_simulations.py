@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from src.data_ingestion import ElectionDataIngester
 from src.sample_data import simulated_data
 from src.statistical_models import DigitAnalyzer, SpatialAnalyzer, TurnoutShareAnalyzer
@@ -62,3 +64,13 @@ def test_legitimate_heterogeneity_demonstrates_spatial_limitation() -> None:
     turnout, _ = TurnoutShareAnalyzer().analyze(ingestion.data, candidate)
     assert spatial["global_permutation_p"] < 0.05
     assert not turnout["Turnout_Share_Flag"].any()
+
+
+def test_recording_error_simulation_and_input_guards() -> None:
+    frame, injected = simulated_data(40, seed=5, injection="recording_error")
+    assert injected.any()
+    assert (frame.loc[injected, "Votes_Candidate_B"] == 0).all()
+    with pytest.raises(ValueError, match="non-negative"):
+        simulated_data(-1)
+    with pytest.raises(ValueError, match="Unknown injection"):
+        simulated_data(5, injection="unknown")

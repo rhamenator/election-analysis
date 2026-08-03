@@ -204,3 +204,106 @@ def test_ml_prediction_and_explanation_guards(ingestion, config_writer) -> None:
     detector = MLAnomalyDetector(path).fit_models(ingestion.data)
     predicted = detector.predict_anomalies(ingestion.data.head(10))
     assert {"DBSCAN_Cluster", "DBSCAN_Noise_Flag"}.issubset(predicted)
+
+
+def test_reported_turnout_fallback_and_transform_integrity_guards(monkeypatch) -> None:
+    frame = pd.DataFrame(
+        {
+            "Reported_Turnout_Percent": [40.0, 60.0, 80.0],
+            "Candidate_Share__a": [0.2, 0.5, 0.8],
+        }
+    )
+    engineer = FeatureEngineer().fit(frame)
+    assert "turnout_fraction" in engineer.feature_columns
+    with pytest.raises(ValueError, match="cannot reproduce"):
+        engineer.transform(frame.drop(columns=["Reported_Turnout_Percent"]))
+
+    monkeypatch.setattr(
+        engineer.scaler, "transform", lambda selected: np.full((len(selected), 1), np.inf)
+    )
+    with pytest.raises(ValueError, match="non-finite"):
+        engineer.transform(frame)
+
+
+def test_ml_orchestrator_marks_expected_and_unexpected_model_failures(
+    ingestion, config_writer, monkeypatch
+) -> None:
+    candidate = ingestion.schema.candidates[0].share_column
+    detector = MLAnomalyDetector()
+    monkeypatch.setattr(
+        detector.isolation_forest,
+        "fit",
+        lambda matrix: (_ for _ in ()).throw(AnalysisUnavailable("not usable")),
+    )
+    run = detector.run(ingestion.data, candidate=candidate, methods=["isolation_forest"])
+    assert run.statuses["isolation_forest"].state == MethodState.UNAVAILABLE
+
+    path = config_writer({"ml": {"dbscan": {"enabled": True, "eps": 0.1, "min_samples": 2}}})
+    detector = MLAnomalyDetector(path)
+    monkeypatch.setattr(
+        detector.dbscan,
+        "fit_predict",
+        lambda matrix: (_ for _ in ()).throw(RuntimeError("dbscan crashed")),
+    )
+    run = detector.run(ingestion.data, candidate=candidate, methods=["dbscan"])
+    assert run.statuses["dbscan"].state == MethodState.FAILED
+    assert "dbscan crashed" in run.statuses["dbscan"].message
+
+    detector = MLAnomalyDetector(path)
+    monkeypatch.setattr(
+        detector.dbscan,
+        "fit_predict",
+        lambda matrix: (_ for _ in ()).throw(AnalysisUnavailable("dbscan unusable")),
+    )
+    run = detector.run(ingestion.data, candidate=candidate, methods=["dbscan"])
+    assert run.statuses["dbscan"].state == MethodState.UNAVAILABLE
+
+
+def test_prediction_ignores_degenerate_dbscan(ingestion, config_writer, monkeypatch) -> None:
+    path = config_writer({"ml": {"dbscan": {"enabled": True, "eps": 100.0, "min_samples": 2}}})
+    detector = MLAnomalyDetector(path).fit_models(ingestion.data)
+    monkeypatch.setattr(
+        detector.dbscan,
+        "fit_predict",
+        lambda matrix: (_ for _ in ()).throw(AnalysisUnavailable("degenerate")),
+    )
+    output = detector.predict_anomalies(ingestion.data.head(3))
+    assert "DBSCAN_Cluster" not in output
+
+    disabled = config_writer({"ml": {"isolation_forest": {"enabled": False}}})
+    detector = MLAnomalyDetector(disabled).fit_models(ingestion.data)
+    output = detector.predict_anomalies(ingestion.data.head(3))
+    assert "IF_Anomaly_Flag" not in output
+
+
+def test_shap_statuses_for_missing_model_dependency_and_success(
+    ingestion, config_writer, monkeypatch
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    enabled = config_writer({"ml": {"shap": {"enabled": True, "sample_size": 5}}})
+    detector = MLAnomalyDetector(enabled).fit_models(ingestion.data)
+    monkeypatch.setitem(sys.modules, "shap", None)
+    assert detector.explain_predictions(ingestion.data)["shap_status"].startswith("unavailable")
+
+    disabled_model = config_writer(
+        {"ml": {"isolation_forest": {"enabled": False}, "shap": {"enabled": True}}}
+    )
+    detector = MLAnomalyDetector(disabled_model).fit_models(ingestion.data)
+    monkeypatch.setitem(sys.modules, "shap", SimpleNamespace())
+    assert "not fitted" in detector.explain_predictions(ingestion.data)["shap_status"]
+
+    class Explainer:
+        def __init__(self, function, background):
+            self.background = background
+
+        def __call__(self, values):
+            return {"rows": len(values)}
+
+    enabled = config_writer({"ml": {"shap": {"enabled": True, "sample_size": 5}}})
+    detector = MLAnomalyDetector(enabled).fit_models(ingestion.data)
+    monkeypatch.setitem(sys.modules, "shap", SimpleNamespace(Explainer=Explainer))
+    explanation = detector.explain_predictions(ingestion.data)
+    assert explanation["shap_status"] == "successful"
+    assert explanation["shap_values"] == {"rows": 5}
