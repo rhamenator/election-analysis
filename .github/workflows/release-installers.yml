@@ -1,0 +1,120 @@
+name: Release installers
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  APP_VERSION: 0.2.${{ github.run_number }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dashboard,mcp,dev]"
+      - run: pytest --cov=src --cov-branch --cov-report=term-missing
+      - run: ruff check src test
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dashboard,mcp]" pyinstaller
+      - name: Freeze MCP application
+        run: pyinstaller --clean --onefile --name election-analysis-mcp --add-data "config.yaml;." --collect-all mcp packaging/election_analysis_mcp.py
+      - run: choco install innosetup --no-progress -y
+      - shell: pwsh
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:APP_VERSION" packaging\windows\ElectionAnalysis.iss'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: election-analysis-windows
+          path: artifacts/*.exe
+          if-no-files-found: error
+
+  macos:
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x64
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dashboard,mcp]" pyinstaller
+      - run: pyinstaller --clean --onefile --name election-analysis-mcp --add-data "config.yaml:." --collect-all mcp packaging/election_analysis_mcp.py
+      - name: Build pkg
+        run: |
+          mkdir -p package-root/usr/local/lib/election-analysis package-root/usr/local/bin artifacts
+          install -m 755 dist/election-analysis-mcp package-root/usr/local/lib/election-analysis/election-analysis-mcp
+          install -m 644 config.yaml package-root/usr/local/lib/election-analysis/config.yaml
+          ln -s ../lib/election-analysis/election-analysis-mcp package-root/usr/local/bin/election-analysis-mcp
+          pkgbuild --root package-root --identifier com.yourfoxprodeveloper.election-analysis --version "$APP_VERSION" "artifacts/election-analysis-${APP_VERSION}-macos-${{ matrix.arch }}.pkg"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: election-analysis-macos-${{ matrix.arch }}
+          path: artifacts/*.pkg
+          if-no-files-found: error
+
+  linux:
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dashboard,mcp]" pyinstaller
+      - run: pyinstaller --clean --onefile --name election-analysis-mcp --add-data "config.yaml:." --collect-all mcp packaging/election_analysis_mcp.py
+      - name: Build deb and rpm
+        run: |
+          sudo apt-get update && sudo apt-get install -y ruby-dev rpm
+          sudo gem install --no-document fpm
+          mkdir -p package-root/usr/lib/election-analysis package-root/usr/bin package-root/etc/election-analysis artifacts
+          install -m 755 dist/election-analysis-mcp package-root/usr/lib/election-analysis/election-analysis-mcp
+          install -m 644 config.yaml package-root/etc/election-analysis/config.yaml
+          ln -s ../lib/election-analysis/election-analysis-mcp package-root/usr/bin/election-analysis-mcp
+          fpm -s dir -t deb -n election-analysis -v "$APP_VERSION" -C package-root -p "artifacts/election-analysis_${APP_VERSION}_amd64.deb" .
+          fpm -s dir -t rpm -n election-analysis -v "$APP_VERSION" -C package-root -p "artifacts/election-analysis-${APP_VERSION}-1.x86_64.rpm" .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: election-analysis-linux
+          path: artifacts/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          pattern: election-analysis-*
+          merge-multiple: true
+      - run: gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
