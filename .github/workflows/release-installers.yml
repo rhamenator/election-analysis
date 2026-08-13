@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -e ".[dashboard,mcp]" pyinstaller
+      - run: pip install -e ".[dashboard,mcp]" "mcp[cli]>=2,<3" pyinstaller
       - name: Freeze MCP application
         run: pyinstaller --clean --onefile --name election-analysis-mcp --add-data "config.yaml;." --collect-all mcp packaging/election_analysis_mcp.py
       - run: choco install innosetup --no-progress -y
@@ -62,7 +62,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -e ".[dashboard,mcp]" pyinstaller
+      - run: pip install -e ".[dashboard,mcp]" "mcp[cli]>=2,<3" pyinstaller
       - run: pyinstaller --clean --onefile --name election-analysis-mcp --add-data "config.yaml:." --collect-all mcp packaging/election_analysis_mcp.py
       - name: Build pkg
         run: |
@@ -86,7 +86,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -e ".[dashboard,mcp]" pyinstaller
+      - run: pip install -e ".[dashboard,mcp]" "mcp[cli]>=2,<3" pyinstaller
       - run: pyinstaller --clean --onefile --name election-analysis-mcp --add-data "config.yaml:." --collect-all mcp packaging/election_analysis_mcp.py
       - name: Build deb and rpm
         run: |
