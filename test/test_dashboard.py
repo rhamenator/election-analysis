@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -11,7 +13,8 @@ from src.workflow import filter_records
 
 
 def open_app() -> AppTest:
-    return AppTest.from_file("src/dashboard.py").run(timeout=30)
+    dashboard = Path(__file__).resolve().parents[1] / "src" / "dashboard.py"
+    return AppTest.from_file(dashboard).run(timeout=30)
 
 
 def test_initial_page_and_sample_download_render() -> None:
