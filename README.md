@@ -1,3 +1,7 @@
+<p align="center">
+  <img src=".github/assets/logo.png" alt="Election Analysis logo" width="220">
+</p>
+
 # Precinct Election Analysis
 
 An exploratory, reproducible system for validating precinct election returns and examining
