@@ -21,7 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 dashboard = ["folium>=0.15", "plotly>=5.18", "streamlit>=1.35"]
 spatial = ["esda>=2.6", "geopandas>=0.14", "libpysal>=4.9"]
-llm = ["openai>=2,<3"]
+llm = ["openai>=2,<4"]
 mcp = ["mcp>=2,<3"]
 dev = [
   "mypy>=1.10",
